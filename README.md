@@ -72,8 +72,45 @@ npm run dev
 
 - 每个模块的前端页面在 `frontend/src/views/<模块>/index.vue`，后端接口在
   `backend/app/routers/<模块>.py`，业务规则在 `backend/app/services/<模块>.py`。
-- 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
+- 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message, codes }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
+
+## 入湖链路：登记快照 → 校验准入 → 归档
+
+原始落地（landing）与贴源层（ods）通过共享校验快照
+（`backend/app/services/snapshot.py`，内存表 `snapshot`）串联，两个入口对
+"哪个版本可用"给出同一份判断。
+
+### 状态与门禁
+
+- 落地批次只能按 `草稿 → 落地中 → 已落地 → 已归档` 推进；草稿跨到归档、
+  落地中直接归档、归档后重开文件/重复导入同编号文件都会被拒
+  （`ILLEGAL_TRANSITION` / `ARCHIVED_BATCH_LOCKED`）。
+- 登记时完整保存业务字段：文件格式、接收时刻、原始行数、摘要算法、摘要值、
+  文件大小、`source_manifest`。原始登记一旦提交即持久化，后续任何回滚都不删除它。
+- "确认已落地"提交校验快照，必须同时满足：文件大小 > 0、压缩包内只有一个文件、
+  摘要算法与摘要值齐全、实测行数与登记行数/清单行数一致。失败只落 `FAILED`
+  快照作为恢复锚点，不推进状态、不写审计。可区分的失败码包括：
+  `EMPTY_FILE`、`MULTI_FILE_ARCHIVE`、`DIGEST_MISSING`、`ROW_COUNT_MISMATCH`、
+  `SHARD_CONFLICT`（同摘要不同大小的分片冲突）、`DUPLICATE_FILE`（同名重传）。
+- 同批次并发确认只有首份完整快照能提交，后到者收到 `SNAPSHOT_ALREADY_COMMITTED`。
+- 快照记录 `snapshot_id`、`digest_type`、`digest_value`、`byte_size`、
+  `completed_at`、`source_manifest`；失败后凭 `snapshot_id` 续传会原地转正，
+  不会新建重复快照。
+- 贴源只准入/读取 `PASSED` 快照的批次：`POST /api/ods/{id}/admit` 与
+  `GET /api/ods/readable-batches`。快照、落地批次、贴源关系、审计在同一事务内
+  提交，异常按模块整体回滚，不留半套审计。
+
+### 验收测试
+
+```bash
+cd backend
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+覆盖字段完整持久化、空文件/多文件/重传的可区分结论、同摘要不同大小判分片冲突、
+已归档批次同编号再导入被拒、并发确认只接受一份、贴源只读取校验通过批次、
+事务回滚不删除原始登记、按 `snapshot_id` 恢复等 29 个用例。
 
 领域：数据工程
 子方向：数仓与数据湖

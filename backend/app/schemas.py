@@ -19,6 +19,9 @@ class ActionResult(BaseModel):
     ok: bool
     message: str
     entry: dict[str, Any] | None = None
+    # 结构化失败码（EMPTY_FILE / SHARD_CONFLICT / ARCHIVED_BATCH_LOCKED 等），
+    # 前端与验收脚本据此区分空文件、分片冲突、归档锁定等不同失败原因。
+    codes: list[str] = Field(default_factory=list)
 
 
 class EntryPayload(BaseModel):
@@ -30,16 +33,16 @@ class EntryPayload(BaseModel):
 
 
 class LandingEntry(BaseModel):
-    """落地批次明细结构。"""
+    """落地批次明细结构（业务字段在登记时完整持久化）。"""
 
     field_0: str | None = None  # 批次编号
     field_1: str | None = None  # 来源系统
     field_2: str | None = None  # 落地路径
     field_3: str | None = None  # 文件格式
     field_4: str | None = None  # 接收时间
-    field_5: str | None = None  # 原始行数
-    field_6: str | None = None  # 校验摘要
-    field_7: str | None = None  # 批次状态
+    field_5: int | None = None  # 原始行数
+    field_6: str | None = None  # 摘要算法
+    field_7: str | None = None  # 摘要值
 
 class OdsEntry(BaseModel):
     """贴源表明细结构。"""
